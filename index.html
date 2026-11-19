@@ -1,31 +1,217 @@
 <!DOCTYPE html>
-<!-- A placeholder from the Home Sales template. Replace this file with your site's first page. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Under construction</title>
-  <!-- An empty icon, so the browser doesn't log an error looking for favicon.ico -->
+  <title>Median sale price by college town</title>
   <link rel="icon" href="data:,">
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light dark;
+      --text: #1a1a1a;
+      --muted: #5c5c5c;
+      --rule: #d0d0d0;
+      --bar: #2f6690;
+      --bar-track: #ececec;
+      --surface: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --text: #ededed;
+        --muted: #aaaaaa;
+        --rule: #444444;
+        --bar: #6aa6d6;
+        --bar-track: #2a2a2a;
+        --surface: #121212;
+      }
+    }
+    :root[data-theme="dark"] {
+      --text: #ededed;
+      --muted: #aaaaaa;
+      --rule: #444444;
+      --bar: #6aa6d6;
+      --bar-track: #2a2a2a;
+      --surface: #121212;
+    }
     body {
-      max-width: 40rem;
       margin: 0 auto;
-      padding: 3rem 1rem;
+      max-width: 48rem;
+      padding: 2rem 1rem 3rem;
+      background: var(--surface);
+      color: var(--text);
       font-family: system-ui, sans-serif;
       line-height: 1.5;
     }
-    footer { margin-top: 3rem; font-size: 0.875rem; opacity: 0.75; }
+    h1 { font-size: 1.75rem; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.25rem; margin: 2.5rem 0 0.75rem; }
+    p { margin: 0 0 1rem; }
+    .muted { color: var(--muted); }
+    .rule {
+      border-left: 4px solid var(--bar);
+      padding: 0.25rem 0 0.25rem 0.75rem;
+      margin: 1.5rem 0;
+    }
+    #status { color: var(--muted); }
+
+    /* Horizontal bar chart */
+    .chart { list-style: none; margin: 0; padding: 0; }
+    .chart li {
+      display: grid;
+      grid-template-columns: minmax(6.5rem, 9rem) 1fr minmax(5.5rem, auto);
+      column-gap: 0.6rem;
+      align-items: center;
+      margin-bottom: 0.4rem;
+    }
+    .chart .label { font-size: 0.95rem; overflow-wrap: anywhere; }
+    .track {
+      background: var(--bar-track);
+      border-radius: 3px;
+      height: 1.25rem;
+    }
+    .bar {
+      height: 100%;
+      background: var(--bar);
+      border-radius: 3px;
+      min-width: 2px;
+    }
+    .chart .value {
+      font-size: 0.9rem;
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+    caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
+    th, td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: left; }
+    th { font-weight: 600; }
+    td.num, th.num { text-align: right; }
+
+    footer { margin-top: 3rem; font-size: 0.875rem; color: var(--muted); }
   </style>
 </head>
 <body>
   <main>
-    <h1>This site is under construction</h1>
-    <p>It will show findings from the College-town home sales dataset.</p>
+    <h1>Median sale price by college town</h1>
+    <p id="intro" class="muted">Loading the data&hellip;</p>
+    <p id="status" role="status"></p>
+
+    <div id="rule-note" class="rule" hidden></div>
+
+    <section id="chart-section" hidden>
+      <h2>Median sale price by city</h2>
+      <ul id="chart" class="chart" aria-label="Bar chart of median sale price by city, largest first"></ul>
+    </section>
+
+    <section id="table-section" hidden>
+      <h2>Sales and median sale price by city</h2>
+      <div class="table-wrap">
+        <table>
+          <caption>One row per city, largest median first.</caption>
+          <thead>
+            <tr>
+              <th scope="col">City</th>
+              <th scope="col" class="num">Sales</th>
+              <th scope="col" class="num">Median sale price</th>
+            </tr>
+          </thead>
+          <tbody id="city-rows"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
+
   <footer>
     <p>Data: College-town home sales dataset, version 1.0 (2026). University of Illinois-Deloitte Foundation Center for Business Emerging Technologies. Data collected March 2026.</p>
   </footer>
+
+  <script>
+    (function () {
+      var DATA_URL = "data/city_median_sale_prices.json";
+
+      // Whole dollars show without cents. A half-dollar median shows its cents.
+      var wholeDollars = new Intl.NumberFormat("en-US", {
+        style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0
+      });
+      var withCents = new Intl.NumberFormat("en-US", {
+        style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2
+      });
+      var money = {
+        format: function (x) {
+          return Number.isInteger(x) ? wholeDollars.format(x) : withCents.format(x);
+        }
+      };
+      var count = new Intl.NumberFormat("en-US");
+
+      function el(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function render(data) {
+        var cities = data.cities;
+        var max = 0;
+        cities.forEach(function (c) {
+          if (c.median_sale_price > max) max = c.median_sale_price;
+        });
+
+        document.getElementById("intro").textContent =
+          "Median sale price for " + count.format(data.rows_used) + " home sales in " +
+          count.format(data.city_count) + " college towns, from the College-town home sales dataset.";
+
+        var rule = document.getElementById("rule-note");
+        rule.textContent =
+          "Rule: sales with a blank price, or a price under $" + count.format(data.min_sale_price) +
+          ", are left out. That removes " + count.format(data.rows_under_min_price + data.rows_blank_price) +
+          " of " + count.format(data.rows_in_source) + " sales (" +
+          count.format(data.rows_under_min_price) + " under $" + count.format(data.min_sale_price) +
+          " and " + count.format(data.rows_blank_price) + " with no price), leaving " +
+          count.format(data.rows_used) + " sales.";
+        rule.hidden = false;
+
+        var chart = document.getElementById("chart");
+        cities.forEach(function (c) {
+          var li = el("li");
+          var name = c.city + ", " + c.state;
+          li.appendChild(el("span", "label", name));
+          var track = el("div", "track");
+          var bar = el("div", "bar");
+          bar.style.width = (c.median_sale_price / max * 100).toFixed(2) + "%";
+          bar.setAttribute("aria-hidden", "true");
+          track.appendChild(bar);
+          li.appendChild(track);
+          li.appendChild(el("span", "value", money.format(c.median_sale_price)));
+          chart.appendChild(li);
+        });
+        document.getElementById("chart-section").hidden = false;
+
+        var body = document.getElementById("city-rows");
+        cities.forEach(function (c) {
+          var tr = el("tr");
+          tr.appendChild(el("td", null, c.city + ", " + c.state));
+          tr.appendChild(el("td", "num", count.format(c.sales)));
+          tr.appendChild(el("td", "num", money.format(c.median_sale_price)));
+          body.appendChild(tr);
+        });
+        document.getElementById("table-section").hidden = false;
+      }
+
+      fetch(DATA_URL)
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.json();
+        })
+        .then(render)
+        .catch(function () {
+          document.getElementById("intro").textContent = "";
+          document.getElementById("status").textContent =
+            "The city summary could not be loaded. It is made by scripts/city_median_prices.py.";
+        });
+    })();
+  </script>
 </body>
 </html>
